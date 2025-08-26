@@ -59,6 +59,7 @@ func main() {
 		//Определяем отступ для записи
 		offset := int64(len(bytes))
 
+		//ВНИМАНИЕ - Мне не нравится это решение
 		//Если первый объект то 0 иначе -2 байта чтобы перезаписать ']'
 		if length != 0 {
 			offset -= 2
@@ -105,6 +106,33 @@ func main() {
 		}
 		fmt.Printf("( id:%d, '%s', статус: '%s' )\n", task.Id, task.Description, task.Status)
 
+	} else if command == "delete" {
+		//Считываем файл
+		bytes, err := os.ReadFile(nameOfFile)
+		if err != nil {
+			log.Fatal(err.Error())
+		}
+
+		//Получаем количество задач в файле
+		length := getLenOfTaskList(&bytes) - 1
+
+		//ВНИМАНИЕ -  А что если удалить задачу с id 2, то ее же можно будет получить, но ее самой не существует. Нужно наверное возвращать что такой задачи нет
+		id, err := strconv.Atoi(secondArg)
+		if err != nil || id < 0 || id > length {
+			log.Fatal("Id должен быть в диапазоне от 0 до ", length)
+		}
+
+		data := deleteTask(&bytes, id)
+
+		//ВНИМАНИЕ -Обработать ошибку
+		file.Write(data)
+
+		if err := file.Truncate(int64(len(data))); err != nil {
+			log.Fatal(err.Error())
+		}
+
+		fmt.Println("Успешно")
+
 	} else if strings.HasPrefix(command, "mark") { //Если команда отметить новый статус задачи
 		//Считываем файл
 		bytes, err := os.ReadFile(nameOfFile)
@@ -121,11 +149,18 @@ func main() {
 			log.Fatal("Id должен быть в диапазоне от 0 до ", length)
 		}
 
-		task, err := getTaskById(&bytes, id)
-		if err != nil {
+		//ВНИМАНИЕ - Может сделать валидацию на смену статуса, а то так можно на любой поменять
+		suffix, _ := strings.CutPrefix(command, "mark-")
+		data := markTask(&bytes, id, Status(suffix))
+
+		//ВНИМАНИЕ -Обработать ошибку
+		file.Write(data)
+
+		if err := file.Truncate(int64(len(data))); err != nil {
 			log.Fatal(err.Error())
 		}
-		fmt.Printf("( id:%d, '%s', статус: '%s' )\n", task.Id, task.Description, task.Status)
+
+		fmt.Println("Успешно")
 	}
 }
 
@@ -141,16 +176,15 @@ func createTask(id int, description string) string {
 		return "," + encodedTask
 	}
 }
-func markTask(bytes *[]byte, id int) (Task, error) {
+func deleteTask(bytes *[]byte, id int) []byte {
 
 	isValue := false
-	buffer := make([]byte, 0)
+	isFound := false
 	tempValue := make([]byte, 0)
-	task := Task{}
 	count := -1
+	startOffset := -1
+	endOffset := -1
 
-	v := reflect.ValueOf(&task).Elem()
-	// Нужно проходится по байтам и когда дошел до нужного id то начинается запись новых байтов со status, и заканичивается запись байтов когда доходишь до символа } или ,
 	for i := 0; i < len(*bytes); i++ {
 		symbol := (*bytes)[i]
 
@@ -159,29 +193,23 @@ func markTask(bytes *[]byte, id int) (Task, error) {
 			isValue = true
 			continue
 		} else if (symbol == '}' || symbol == ',') && count >= 0 {
-			isValue = false
 
-			field := v.Field(count)
-
-			if field.Kind() == reflect.String {
-
-				field.SetString(strings.Trim(string(tempValue), "\""))
-
-			} else if field.Kind() == reflect.Int {
-				number, err := strconv.Atoi(string(tempValue))
-				if err != nil {
-					return task, err
-				}
-				field.SetInt(int64(number))
+			if !isFound && count == 2 {
+				startOffset = i + 1
 			}
 
-			if v.NumField() == (count + 1) {
-				if task.Id == id {
+			isValue = false
+
+			if count == 2 { //ВНИМАНИЕ - Сильная привязка что последнее поле по счету 2
+				if isFound {
+					endOffset = i + 1
 					break
 				}
 				count = -1
-				task = Task{}
+			} else if count == 0 { //ВНИМАНИЕ - Сильная привязка к id что поле должно быть на первом месте
+				isFound = string(tempValue) == strconv.Itoa(id)
 			}
+
 			tempValue = make([]byte, 0)
 		}
 		if isValue {
@@ -189,7 +217,49 @@ func markTask(bytes *[]byte, id int) (Task, error) {
 		}
 	}
 
-	return task, nil
+	return append((*bytes)[:startOffset], (*bytes)[endOffset:]...)
+}
+func markTask(bytes *[]byte, id int, status Status) []byte {
+
+	isValue := false
+	isFound := false
+	tempValue := make([]byte, 0)
+	count := -1
+	startOffset := -1
+	endOffset := -1
+
+	for i := 0; i < len(*bytes); i++ {
+		symbol := (*bytes)[i]
+
+		if symbol == ':' {
+			count++
+			if count == 2 && isFound {
+				startOffset = i + 1
+			} else {
+				isValue = true
+				continue
+			}
+		} else if (symbol == '}' || symbol == ',') && count >= 0 {
+			isValue = false
+
+			if (count + 1) == 3 { //ВНИМАНИЕ - Сильная привязка что последнее поле по счету 3
+				if isFound {
+					endOffset = i
+					break
+				}
+				count = -1
+			} else if count == 0 { //ВНИМАНИЕ - Сильная привязка к id что поле должно быть на первом месте
+				isFound = string(tempValue) == strconv.Itoa(id)
+			}
+
+			tempValue = make([]byte, 0)
+		}
+		if isValue {
+			tempValue = append(tempValue, symbol)
+		}
+	}
+
+	return append((*bytes)[:startOffset], append([]byte(`"`+status+`"`), (*bytes)[endOffset:]...)...)
 }
 func getTaskById(bytes *[]byte, id int) (Task, error) {
 
