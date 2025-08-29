@@ -31,28 +31,31 @@ type Task struct {
 
 ```bash
 # Добавить задачу
-./main.go add "Buy groceries"
+go run . add "Buy groceries"
+
+# Обновить задачу по id
+go run . update 1 "New description"
 
 # Удалить задачу по id
-./main.go delete 1
+go run . delete 1
 
 # Отметить задачу как "в процессе"
-./main.go mark-in-progress 1
+go run . mark-in-progress 1
 
 # Отметить задачу как "выполнено"
-./main.go mark-done 1
+go run . mark-done 1
 
 # Показать все задачи
-./main.go list
+go run . list
 
 # Показать только выполненные
-./main.go list done
+go run . list done
 
 # Показать только "в планах"
-./main.go list todo
+go run . list todo
 
 # Показать только "в процессе"
-./main.go list in-progress
+go run . list in-progress
 ```
 
 ---

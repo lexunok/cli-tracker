@@ -4,34 +4,28 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"reflect"
 	"strconv"
-	"strings"
-)
-
-type Task struct {
-	Id          int
-	Description string
-	Status      Status
-}
-
-type Status string
-
-const (
-	TODO       Status = "todo"
-	InProgress Status = "in-progress"
-	Done       Status = "done"
 )
 
 func main() {
 
 	//Получаем аргументы
-	command := os.Args[1]
+	var command Command
+	if len(os.Args) > 1 {
+		command = Command(os.Args[1])
+	}
+
 	var secondArg string
 	if len(os.Args) > 2 {
 		secondArg = os.Args[2]
 	}
-	nameOfFile := "db.json"
+
+	var thirdArg string
+	if len(os.Args) > 3 {
+		thirdArg = os.Args[3]
+	}
+
+	nameOfFile := "tasks.json"
 
 	//Создаем файл если его не существует
 	file, err := os.OpenFile(nameOfFile, os.O_RDONLY|os.O_WRONLY|os.O_CREATE, 0644)
@@ -41,7 +35,8 @@ func main() {
 	defer file.Close()
 
 	//Если команда добавить
-	if command == "add" {
+	switch command {
+	case Add:
 
 		//Считываем файл
 		//ВНИМАНИЕ - Мы второй раз открываем файл методом ReadFile. Нужно сделать свою реализацию
@@ -68,7 +63,8 @@ func main() {
 		//Записываем
 		file.WriteAt([]byte(task), offset)
 
-	} else if command == "list" { //Если команда получить список
+	//Если команда получить список
+	case List:
 
 		//Считываем файл
 		bytes, err := os.ReadFile(nameOfFile)
@@ -84,7 +80,8 @@ func main() {
 			fmt.Printf("\t ( id:%d, '%s', статус: '%s' )\n", el.Id, el.Description, el.Status)
 		}
 
-	} else if command == "get" { //Если команда получить задачу
+	//Если команда получить задачу
+	case Get:
 		//Считываем файл
 		bytes, err := os.ReadFile(nameOfFile)
 		if err != nil {
@@ -106,7 +103,36 @@ func main() {
 		}
 		fmt.Printf("( id:%d, '%s', статус: '%s' )\n", task.Id, task.Description, task.Status)
 
-	} else if command == "delete" {
+	//Если команда обновить задачу
+	case Update:
+		//Считываем файл
+		bytes, err := os.ReadFile(nameOfFile)
+		if err != nil {
+			log.Fatal(err.Error())
+		}
+
+		//Получаем количество задач в файле
+		length := getLenOfTaskList(&bytes) - 1
+
+		//ВНИМАНИЕ -  А что если удалить задачу с id 2, то ее же можно будет получить, но ее самой не существует. Нужно наверное возвращать что такой задачи нет
+		id, err := strconv.Atoi(secondArg)
+		if err != nil || id < 0 || id > length {
+			log.Fatal("Id должен быть в диапазоне от 0 до ", length)
+		}
+
+		data := updateTask(&bytes, id, thirdArg)
+
+		//ВНИМАНИЕ -Обработать ошибку
+		file.Write(data)
+
+		if err := file.Truncate(int64(len(data))); err != nil {
+			log.Fatal(err.Error())
+		}
+
+		fmt.Println("Успешно")
+
+	//Если команда удалить
+	case Delete:
 		//Считываем файл
 		bytes, err := os.ReadFile(nameOfFile)
 		if err != nil {
@@ -133,7 +159,8 @@ func main() {
 
 		fmt.Println("Успешно")
 
-	} else if strings.HasPrefix(command, "mark") { //Если команда отметить новый статус задачи
+	//Если команда отметить поменять статус задачи на "В прогрессе"
+	case MarkInProgress:
 		//Считываем файл
 		bytes, err := os.ReadFile(nameOfFile)
 		if err != nil {
@@ -149,9 +176,35 @@ func main() {
 			log.Fatal("Id должен быть в диапазоне от 0 до ", length)
 		}
 
-		//ВНИМАНИЕ - Может сделать валидацию на смену статуса, а то так можно на любой поменять
-		suffix, _ := strings.CutPrefix(command, "mark-")
-		data := markTask(&bytes, id, Status(suffix))
+		data := markTask(&bytes, id, InProgress)
+
+		//ВНИМАНИЕ -Обработать ошибку
+		file.Write(data)
+
+		if err := file.Truncate(int64(len(data))); err != nil {
+			log.Fatal(err.Error())
+		}
+
+		fmt.Println("Успешно")
+
+	//Если команда отметить поменять статус задачи на "Выполнено"
+	case MarkDone:
+		//Считываем файл
+		bytes, err := os.ReadFile(nameOfFile)
+		if err != nil {
+			log.Fatal(err.Error())
+		}
+
+		//Получаем количество задач в файле
+		length := getLenOfTaskList(&bytes) - 1
+
+		//ВНИМАНИЕ -  А что если удалить задачу с id 2, то ее же можно будет получить, но ее самой не существует. Нужно наверное возвращать что такой задачи нет
+		id, err := strconv.Atoi(secondArg)
+		if err != nil || id < 0 || id > length {
+			log.Fatal("Id должен быть в диапазоне от 0 до ", length)
+		}
+
+		data := markTask(&bytes, id, Done)
 
 		//ВНИМАНИЕ -Обработать ошибку
 		file.Write(data)
@@ -162,217 +215,4 @@ func main() {
 
 		fmt.Println("Успешно")
 	}
-}
-
-func createTask(id int, description string) string {
-
-	fmt.Println("Создана задача:", id, "-", description)
-
-	encodedTask := fmt.Sprintf("\n\t{\"id\":%d, \"description\":\"%s\", \"status\":\"%s\"}\n]", id, description, TODO)
-
-	if id == 0 {
-		return "[" + encodedTask
-	} else {
-		return "," + encodedTask
-	}
-}
-func deleteTask(bytes *[]byte, id int) []byte {
-
-	isValue := false
-	isFound := false
-	tempValue := make([]byte, 0)
-	count := -1
-	startOffset := -1
-	endOffset := -1
-
-	for i := 0; i < len(*bytes); i++ {
-		symbol := (*bytes)[i]
-
-		if symbol == ':' {
-			count++
-			isValue = true
-			continue
-		} else if (symbol == '}' || symbol == ',') && count >= 0 {
-
-			if !isFound && count == 2 {
-				startOffset = i + 1
-			}
-
-			isValue = false
-
-			if count == 2 { //ВНИМАНИЕ - Сильная привязка что последнее поле по счету 2
-				if isFound {
-					endOffset = i + 1
-					break
-				}
-				count = -1
-			} else if count == 0 { //ВНИМАНИЕ - Сильная привязка к id что поле должно быть на первом месте
-				isFound = string(tempValue) == strconv.Itoa(id)
-			}
-
-			tempValue = make([]byte, 0)
-		}
-		if isValue {
-			tempValue = append(tempValue, symbol)
-		}
-	}
-
-	return append((*bytes)[:startOffset], (*bytes)[endOffset:]...)
-}
-func markTask(bytes *[]byte, id int, status Status) []byte {
-
-	isValue := false
-	isFound := false
-	tempValue := make([]byte, 0)
-	count := -1
-	startOffset := -1
-	endOffset := -1
-
-	for i := 0; i < len(*bytes); i++ {
-		symbol := (*bytes)[i]
-
-		if symbol == ':' {
-			count++
-			if count == 2 && isFound {
-				startOffset = i + 1
-			} else {
-				isValue = true
-				continue
-			}
-		} else if (symbol == '}' || symbol == ',') && count >= 0 {
-			isValue = false
-
-			if (count + 1) == 3 { //ВНИМАНИЕ - Сильная привязка что последнее поле по счету 3
-				if isFound {
-					endOffset = i
-					break
-				}
-				count = -1
-			} else if count == 0 { //ВНИМАНИЕ - Сильная привязка к id что поле должно быть на первом месте
-				isFound = string(tempValue) == strconv.Itoa(id)
-			}
-
-			tempValue = make([]byte, 0)
-		}
-		if isValue {
-			tempValue = append(tempValue, symbol)
-		}
-	}
-
-	return append((*bytes)[:startOffset], append([]byte(`"`+status+`"`), (*bytes)[endOffset:]...)...)
-}
-func getTaskById(bytes *[]byte, id int) (Task, error) {
-
-	isValue := false
-	tempValue := make([]byte, 0)
-	task := Task{}
-	count := -1
-
-	v := reflect.ValueOf(&task).Elem()
-
-	for i := 0; i < len(*bytes); i++ {
-		symbol := (*bytes)[i]
-
-		if symbol == ':' {
-			count++
-			isValue = true
-			continue
-		} else if (symbol == '}' || symbol == ',') && count >= 0 {
-			isValue = false
-
-			field := v.Field(count)
-
-			if field.Kind() == reflect.String {
-
-				field.SetString(strings.Trim(string(tempValue), "\""))
-
-			} else if field.Kind() == reflect.Int {
-				number, err := strconv.Atoi(string(tempValue))
-				if err != nil {
-					return task, err
-				}
-				field.SetInt(int64(number))
-			}
-
-			if v.NumField() == (count + 1) {
-				if task.Id == id {
-					break
-				}
-				count = -1
-				task = Task{}
-			}
-			tempValue = make([]byte, 0)
-		}
-		if isValue {
-			tempValue = append(tempValue, symbol)
-		}
-	}
-
-	return task, nil
-}
-
-func getTaskList(bytes *[]byte, filter string) ([]Task, error) {
-
-	isValue := false
-	listOfTasks := make([]Task, 0)
-	tempValue := make([]byte, 0)
-	tempTask := Task{}
-	count := -1
-
-	v := reflect.ValueOf(&tempTask).Elem()
-
-	for i := 0; i < len(*bytes); i++ {
-		symbol := (*bytes)[i]
-
-		if symbol == ':' {
-			count++
-			isValue = true
-			continue
-		} else if (symbol == '}' || symbol == ',') && count >= 0 {
-			isValue = false
-
-			field := v.Field(count)
-
-			if field.Kind() == reflect.String {
-
-				field.SetString(strings.Trim(string(tempValue), "\""))
-
-			} else if field.Kind() == reflect.Int {
-				number, err := strconv.Atoi(string(tempValue))
-				if err != nil {
-					return listOfTasks, err
-				}
-				field.SetInt(int64(number))
-			}
-
-			if v.NumField() == (count + 1) {
-				if tempTask.Status == Status(filter) || filter == "" {
-					listOfTasks = append(listOfTasks, tempTask)
-				}
-				count = -1
-				tempTask = Task{}
-			}
-			tempValue = make([]byte, 0)
-		}
-		if isValue {
-			tempValue = append(tempValue, symbol)
-		}
-	}
-
-	return listOfTasks, nil
-}
-func getLenOfTaskList(bytes *[]byte) int {
-
-	task := Task{}
-	count := 0
-
-	v := reflect.ValueOf(&task).Elem()
-
-	for i := 0; i < len(*bytes); i++ {
-		if (*bytes)[i] == ':' {
-			count++
-		}
-	}
-
-	return count / v.NumField()
 }
