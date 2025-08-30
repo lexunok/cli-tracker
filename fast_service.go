@@ -1,25 +1,122 @@
 package main
 
 import (
+	"cli-tracker/models"
 	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 )
 
-func createTask(id int, description string) string {
+type FastService struct {
+	Service
+}
+
+// READY
+func (FastService) GetList(bytes *[]byte, filter string) error {
+
+	fmt.Println("Список задач:")
+
+	var (
+		isValue   bool
+		tempValue []byte
+		tempTask  models.Task
+	)
+	count := -1
+
+	v := reflect.ValueOf(&tempTask).Elem()
+
+	for i := 0; i < len(*bytes); i++ {
+		symbol := (*bytes)[i]
+
+		if symbol == ':' && !isValue {
+			count++
+			isValue = true
+			continue
+		} else if (symbol == '}' || symbol == ',') && count >= 0 {
+			isValue = false
+
+			field := v.Field(count)
+
+			if field.Kind() == reflect.String {
+
+				field.SetString(strings.Trim(string(tempValue), "\""))
+
+			} else if field.Kind() == reflect.Int {
+				number, err := strconv.Atoi(string(tempValue))
+				if err != nil {
+					return err
+				}
+				field.SetInt(int64(number))
+			} else if field.Kind() == reflect.TypeOf(time.Time{}).Kind() {
+				dateTime, err := time.Parse(time.RFC3339, strings.Trim(string(tempValue), "\""))
+				if err != nil {
+					return err
+				}
+				field.Set(reflect.ValueOf(dateTime))
+			}
+
+			if v.NumField() == (count + 1) {
+				if tempTask.Status == models.Status(filter) || filter == "" {
+					createdAt := tempTask.CreatedAt.Format(time.DateTime)
+					updatedAt := tempTask.UpdatedAt.Format(time.DateTime)
+					fmt.Printf("\t ( id:%d, '%s', статус: '%s', createdAt: '%s', updatedAt: '%s' )\n", tempTask.Id, tempTask.Description, tempTask.Status, createdAt, updatedAt)
+				}
+				count = -1
+				tempTask = models.Task{}
+			}
+			tempValue = make([]byte, 0)
+		}
+		if isValue {
+			tempValue = append(tempValue, symbol)
+		}
+	}
+	return nil
+}
+
+// READY
+func (FastService) GetLen(bytes *[]byte) int {
+
+	var (
+		task    models.Task
+		count   int
+		isValue bool
+	)
+
+	for i := 0; i < len(*bytes); i++ {
+		symbol := (*bytes)[i]
+		if symbol == ':' && !isValue {
+			count++
+			isValue = true
+		} else if (symbol == '}' || symbol == ',') && count >= 0 {
+			isValue = false
+		}
+	}
+
+	return count / reflect.ValueOf(&task).Elem().NumField()
+}
+
+// READY
+func (s FastService) Create(bytes *[]byte, description string) []byte {
+
+	offset := 0
+	id := s.GetLen(bytes)
 
 	fmt.Println("Создана задача:", id, "-", description)
-
-	encodedTask := fmt.Sprintf("\n\t{\"id\":%d, \"description\":\"%s\", \"status\":\"%s\"}\n]", id, description, TODO)
+	time := time.Now().Format(time.RFC3339)
+	encodedTask := fmt.Sprintf("\n\t{\"id\":%d, \"description\":\"%s\", \"status\":\"%s\", \"createdAt\":\"%s\", \"updatedAt\":\"%s\"}\n]", id, description, models.TODO, time, time)
 
 	if id == 0 {
-		return "[" + encodedTask
+		encodedTask = "[" + encodedTask
 	} else {
-		return "," + encodedTask
+		encodedTask = "," + encodedTask
+		offset = len(*bytes) - 2
 	}
+
+	return append((*bytes)[:offset], []byte(encodedTask)...)
 }
-func deleteTask(bytes *[]byte, id int) []byte {
+func (FastService) Delete(bytes *[]byte, id int) []byte {
 
 	isValue := false
 	isFound := false
@@ -62,7 +159,7 @@ func deleteTask(bytes *[]byte, id int) []byte {
 
 	return append((*bytes)[:startOffset], (*bytes)[endOffset:]...)
 }
-func updateTask(bytes *[]byte, id int, description string) []byte {
+func (FastService) Update(bytes *[]byte, id int, description string) []byte {
 
 	isValue := false
 	isFound := false
@@ -104,7 +201,7 @@ func updateTask(bytes *[]byte, id int, description string) []byte {
 
 	return append((*bytes)[:startOffset], append([]byte(`"`+description+`"`), (*bytes)[endOffset:]...)...)
 }
-func markTask(bytes *[]byte, id int, status Status) []byte {
+func (FastService) Mark(bytes *[]byte, id int, status models.Status) []byte {
 
 	isValue := false
 	isFound := false
@@ -147,11 +244,11 @@ func markTask(bytes *[]byte, id int, status Status) []byte {
 
 	return append((*bytes)[:startOffset], append([]byte(`"`+status+`"`), (*bytes)[endOffset:]...)...)
 }
-func getTaskById(bytes *[]byte, id int) (Task, error) {
+func (FastService) GetOne(bytes *[]byte, id int) (models.Task, error) {
 
 	isValue := false
 	tempValue := make([]byte, 0)
-	task := Task{}
+	task := models.Task{}
 	count := -1
 
 	v := reflect.ValueOf(&task).Elem()
@@ -185,7 +282,7 @@ func getTaskById(bytes *[]byte, id int) (Task, error) {
 					break
 				}
 				count = -1
-				task = Task{}
+				task = models.Task{}
 			}
 			tempValue = make([]byte, 0)
 		}
@@ -195,70 +292,4 @@ func getTaskById(bytes *[]byte, id int) (Task, error) {
 	}
 
 	return task, nil
-}
-
-func getTaskList(bytes *[]byte, filter string) ([]Task, error) {
-
-	isValue := false
-	listOfTasks := make([]Task, 0)
-	tempValue := make([]byte, 0)
-	tempTask := Task{}
-	count := -1
-
-	v := reflect.ValueOf(&tempTask).Elem()
-
-	for i := 0; i < len(*bytes); i++ {
-		symbol := (*bytes)[i]
-
-		if symbol == ':' {
-			count++
-			isValue = true
-			continue
-		} else if (symbol == '}' || symbol == ',') && count >= 0 {
-			isValue = false
-
-			field := v.Field(count)
-
-			if field.Kind() == reflect.String {
-
-				field.SetString(strings.Trim(string(tempValue), "\""))
-
-			} else if field.Kind() == reflect.Int {
-				number, err := strconv.Atoi(string(tempValue))
-				if err != nil {
-					return listOfTasks, err
-				}
-				field.SetInt(int64(number))
-			}
-
-			if v.NumField() == (count + 1) {
-				if tempTask.Status == Status(filter) || filter == "" {
-					listOfTasks = append(listOfTasks, tempTask)
-				}
-				count = -1
-				tempTask = Task{}
-			}
-			tempValue = make([]byte, 0)
-		}
-		if isValue {
-			tempValue = append(tempValue, symbol)
-		}
-	}
-
-	return listOfTasks, nil
-}
-func getLenOfTaskList(bytes *[]byte) int {
-
-	task := Task{}
-	count := 0
-
-	v := reflect.ValueOf(&task).Elem()
-
-	for i := 0; i < len(*bytes); i++ {
-		if (*bytes)[i] == ':' {
-			count++
-		}
-	}
-
-	return count / v.NumField()
 }

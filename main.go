@@ -1,18 +1,33 @@
 package main
 
 import (
+	"cli-tracker/models"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strconv"
+	"time"
 )
+
+type Service interface {
+	GetOne(*[]byte, int) (models.Task, error)
+	GetList(*[]byte, string) error
+	GetLen(*[]byte) int
+	Create(*[]byte, string) []byte
+	Delete(*[]byte, int) []byte
+	Update(*[]byte, int, string) []byte
+	Mark(*[]byte, int, models.Status) []byte
+}
 
 func main() {
 
+	start := time.Now()
+
 	//Получаем аргументы
-	var command Command
+	var command models.Command
 	if len(os.Args) > 1 {
-		command = Command(os.Args[1])
+		command = models.Command(os.Args[1])
 	}
 
 	var secondArg string
@@ -25,71 +40,100 @@ func main() {
 		thirdArg = os.Args[3]
 	}
 
+	service := Service(FastService{})
 	nameOfFile := "tasks.json"
 
 	//Создаем файл если его не существует
-	file, err := os.OpenFile(nameOfFile, os.O_RDONLY|os.O_WRONLY|os.O_CREATE, 0644)
+	file, err := os.OpenFile(nameOfFile, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
 	defer file.Close()
 
-	//Если команда добавить
+	//Считываем размер файла
+	stat, err := file.Stat()
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	size := stat.Size()
+
+	//Считываем байты в буффер
+	bytes := make([]byte, size)
+	_, err = file.Read(bytes)
+	if err != nil && err != io.EOF {
+		log.Fatal(err.Error())
+	}
+
 	switch command {
-	case Add:
+	//Если команда Help
+	case models.Help:
+		fmt.Println(`
+			# Просмотреть список возможных команд
+			go run . help
 
-		//Считываем файл
-		//ВНИМАНИЕ - Мы второй раз открываем файл методом ReadFile. Нужно сделать свою реализацию
-		bytes, err := os.ReadFile(nameOfFile)
-		if err != nil {
-			log.Fatal(err.Error())
-		}
+			# Добавить задачу
+			go run . add "Buy groceries"
 
-		//Получаем количество задач в файле
-		length := getLenOfTaskList(&bytes)
+			# Обновить задачу по id
+			go run . update 1 "New description"
 
-		//Создаем задачу
-		task := createTask(length, secondArg)
+			# Удалить задачу по id
+			go run . delete 1
 
-		//Определяем отступ для записи
-		offset := int64(len(bytes))
+			# Отметить задачу как "в процессе"
+			go run . mark-in-progress 1
 
-		//ВНИМАНИЕ - Мне не нравится это решение
-		//Если первый объект то 0 иначе -2 байта чтобы перезаписать ']'
-		if length != 0 {
-			offset -= 2
-		}
+			# Отметить задачу как "выполнено"
+			go run . mark-done 1
+
+			# Получить кол-во задач
+			go run . len
+
+			# Показать все задачи
+			go run . list
+
+			# Показать только выполненные
+			go run . list done
+
+			# Показать только "в планах"
+			go run . list todo
+
+			# Показать только "в процессе"
+			go run . list in-progress
+		`)
+	//Если команда добавить
+	case models.Add:
+
+		//Добавляем задачу
+		data := service.Create(&bytes, secondArg)
 
 		//Записываем
-		file.WriteAt([]byte(task), offset)
+		if _, err := file.WriteAt(data, 0); err != nil {
+			log.Fatal(err.Error())
+		}
 
 	//Если команда получить список
-	case List:
+	case models.List:
 
-		//Считываем файл
-		bytes, err := os.ReadFile(nameOfFile)
-		if err != nil {
+		//Выводим список задач из байтов по фильтру если он есть
+		if err := service.GetList(&bytes, secondArg); err != nil {
 			log.Fatal(err.Error())
 		}
 
-		//Декодируем список задач из байтов
-		tasks, _ := getTaskList(&bytes, secondArg)
+	//Если команда получить кол-во задач
+	case models.Len:
 
-		fmt.Println("Список задач:", len(tasks))
-		for _, el := range tasks {
-			fmt.Printf("\t ( id:%d, '%s', статус: '%s' )\n", el.Id, el.Description, el.Status)
-		}
+		//Получить кол-во задач
+		number := service.GetLen(&bytes)
+
+		//Вывести кол-во задач
+		fmt.Println("Всего задач -", number)
 
 	//Если команда получить задачу
-	case Get:
-		//Считываем файл
-		bytes, err := os.ReadFile(nameOfFile)
-		if err != nil {
-			log.Fatal(err.Error())
-		}
+	case models.Get:
 
 		//Получаем количество задач в файле
-		length := getLenOfTaskList(&bytes) - 1
+		length := service.GetLen(&bytes) - 1
 
 		//ВНИМАНИЕ -  А что если удалить задачу с id 2, то ее же можно будет получить, но ее самой не существует. Нужно наверное возвращать что такой задачи нет
 		id, err := strconv.Atoi(secondArg)
@@ -97,22 +141,17 @@ func main() {
 			log.Fatal("Id должен быть в диапазоне от 0 до ", length)
 		}
 
-		task, err := getTaskById(&bytes, id)
+		task, err := service.GetOne(&bytes, id)
 		if err != nil {
 			log.Fatal(err.Error())
 		}
 		fmt.Printf("( id:%d, '%s', статус: '%s' )\n", task.Id, task.Description, task.Status)
 
 	//Если команда обновить задачу
-	case Update:
-		//Считываем файл
-		bytes, err := os.ReadFile(nameOfFile)
-		if err != nil {
-			log.Fatal(err.Error())
-		}
+	case models.Update:
 
 		//Получаем количество задач в файле
-		length := getLenOfTaskList(&bytes) - 1
+		length := service.GetLen(&bytes) - 1
 
 		//ВНИМАНИЕ -  А что если удалить задачу с id 2, то ее же можно будет получить, но ее самой не существует. Нужно наверное возвращать что такой задачи нет
 		id, err := strconv.Atoi(secondArg)
@@ -120,7 +159,7 @@ func main() {
 			log.Fatal("Id должен быть в диапазоне от 0 до ", length)
 		}
 
-		data := updateTask(&bytes, id, thirdArg)
+		data := service.Update(&bytes, id, thirdArg)
 
 		//ВНИМАНИЕ -Обработать ошибку
 		file.Write(data)
@@ -132,15 +171,10 @@ func main() {
 		fmt.Println("Успешно")
 
 	//Если команда удалить
-	case Delete:
-		//Считываем файл
-		bytes, err := os.ReadFile(nameOfFile)
-		if err != nil {
-			log.Fatal(err.Error())
-		}
+	case models.Delete:
 
 		//Получаем количество задач в файле
-		length := getLenOfTaskList(&bytes) - 1
+		length := service.GetLen(&bytes) - 1
 
 		//ВНИМАНИЕ -  А что если удалить задачу с id 2, то ее же можно будет получить, но ее самой не существует. Нужно наверное возвращать что такой задачи нет
 		id, err := strconv.Atoi(secondArg)
@@ -148,7 +182,7 @@ func main() {
 			log.Fatal("Id должен быть в диапазоне от 0 до ", length)
 		}
 
-		data := deleteTask(&bytes, id)
+		data := service.Delete(&bytes, id)
 
 		//ВНИМАНИЕ -Обработать ошибку
 		file.Write(data)
@@ -160,15 +194,10 @@ func main() {
 		fmt.Println("Успешно")
 
 	//Если команда отметить поменять статус задачи на "В прогрессе"
-	case MarkInProgress:
-		//Считываем файл
-		bytes, err := os.ReadFile(nameOfFile)
-		if err != nil {
-			log.Fatal(err.Error())
-		}
+	case models.MarkInProgress:
 
 		//Получаем количество задач в файле
-		length := getLenOfTaskList(&bytes) - 1
+		length := service.GetLen(&bytes) - 1
 
 		//ВНИМАНИЕ -  А что если удалить задачу с id 2, то ее же можно будет получить, но ее самой не существует. Нужно наверное возвращать что такой задачи нет
 		id, err := strconv.Atoi(secondArg)
@@ -176,7 +205,7 @@ func main() {
 			log.Fatal("Id должен быть в диапазоне от 0 до ", length)
 		}
 
-		data := markTask(&bytes, id, InProgress)
+		data := service.Mark(&bytes, id, models.InProgress)
 
 		//ВНИМАНИЕ -Обработать ошибку
 		file.Write(data)
@@ -188,15 +217,10 @@ func main() {
 		fmt.Println("Успешно")
 
 	//Если команда отметить поменять статус задачи на "Выполнено"
-	case MarkDone:
-		//Считываем файл
-		bytes, err := os.ReadFile(nameOfFile)
-		if err != nil {
-			log.Fatal(err.Error())
-		}
+	case models.MarkDone:
 
 		//Получаем количество задач в файле
-		length := getLenOfTaskList(&bytes) - 1
+		length := service.GetLen(&bytes) - 1
 
 		//ВНИМАНИЕ -  А что если удалить задачу с id 2, то ее же можно будет получить, но ее самой не существует. Нужно наверное возвращать что такой задачи нет
 		id, err := strconv.Atoi(secondArg)
@@ -204,7 +228,7 @@ func main() {
 			log.Fatal("Id должен быть в диапазоне от 0 до ", length)
 		}
 
-		data := markTask(&bytes, id, Done)
+		data := service.Mark(&bytes, id, models.Done)
 
 		//ВНИМАНИЕ -Обработать ошибку
 		file.Write(data)
@@ -215,4 +239,6 @@ func main() {
 
 		fmt.Println("Успешно")
 	}
+
+	fmt.Println("Время выполнения команды:", time.Since(start).Microseconds())
 }

@@ -9,6 +9,7 @@
 ## 📌 Возможности
 
 - Добавление задач
+- Обновление задач
 - Удаление задач
 - Изменение статуса (в процессе / выполнено / в планах)
 - Просмотр всех задач или только по статусу
@@ -20,6 +21,8 @@ type Task struct {
     Id          int
     Description string
     Status      Status
+    CreatedAt   time.Time
+    UpdatedAt   time.Time
 }
 ````
 
@@ -30,6 +33,9 @@ type Task struct {
 Запуск программы осуществляется из терминала:
 
 ```bash
+# Просмотреть список возможных команд
+go run . help
+
 # Добавить задачу
 go run . add "Buy groceries"
 
@@ -44,6 +50,9 @@ go run . mark-in-progress 1
 
 # Отметить задачу как "выполнено"
 go run . mark-done 1
+
+# Получить кол-во задач
+go run . len
 
 # Показать все задачи
 go run . list
@@ -67,9 +76,9 @@ go run . list in-progress
 
 ```json
 [
-  {"id":0, "description":"Buy groceries", "status":"todo"},
-  {"id":1, "description":"Finish homework", "status":"in-progress"},
-  {"id":2, "description":"Read Go docs", "status":"done"}
+  {"id":0, "description":"Buy groceries", "status":"todo", "createdAt":"2025-08-30T20:57:26+05:00", "updatedAt":"2025-08-30T20:57:26+05:00"},
+  {"id":1, "description":"Finish homework", "status":"in-progress", "createdAt":"2025-08-30T20:57:26+05:00", "updatedAt":"2025-08-30T20:57:26+05:00"},
+  {"id":2, "description":"Read Go docs", "status":"done", "createdAt":"2025-08-30T20:57:26+05:00", "updatedAt":"2025-08-30T20:57:26+05:00"}
 ]
 ```
 

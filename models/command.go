@@ -1,22 +1,9 @@
-package main
-
-type Task struct {
-	Id          int
-	Description string
-	Status      Status
-}
-
-type Status string
-
-const (
-	TODO       Status = "todo"
-	InProgress Status = "in-progress"
-	Done       Status = "done"
-)
+package models
 
 type Command string
 
 const (
+	Help           Command = "help"
 	Add            Command = "add"
 	List           Command = "list"
 	Get            Command = "get"
